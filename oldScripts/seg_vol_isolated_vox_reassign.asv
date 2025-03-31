@@ -1,0 +1,143 @@
+%file reading/loading
+addpath('/Users/christophermezias/Desktop/MitraLab/nrrdread/'); %if before 2022b, have to install nrrdread and give path
+% segname = 'Allen_to_ccf.vtk'; %Allen segs on CCF
+% outname = 'mouse_ccf_segvol_metrics.csv'; %output csv name
+%segname = 'annotation_100_bregma_LR.vtk'; %Allen 100um, with hemis
+%outname = 'Allen_seg_v3_100_bregma_LR_corrected'; %output vol name
+ %segname = 'annotation_50.vtk'; %Allen 50um from lab Dropbox
+ %outname = 'Allen_seg_v3_50_bregma_corrected'; %output vol name
+%segname = 'annotation_50_bregma_LR.vtk';
+%outname = 'Allen_seg_v3_50_bregma_LR_corrected'; %output vol name
+% outname = 'Allen_v3_segvol_metrics_50um_sym.csv';
+% segname = 'annotation_100.nrrd'; %Allen 25um nrrd from Allen site
+% outname = 'Allen_v3_nrrd_metrics_25um.csv';
+% segname = 'labels_annotation_to_population.vtk';
+% outname = 'marmoset_RIKEN_metrics_lowres.csv';
+% segname = 'merged_CCFSaleem_SegVol.nii.nii';
+% outname = 'marmoset_merged_SaleemRIKEN_corrected';
+%segname = 'marmoset_merged_SaleemRIKEN_LR.nii';
+%segname = 'marmoset_merged_SaleemRIKEN_LR_remap.nii';
+%outname = 'marmoset_merged_SaleemRIKEN_corrected_LR';
+segname = 'Allen_to_ccf_20_LR_u16.mat';
+outname = 'Allen_to_ccf_20_LR_u16_corrected';
+outext = '.mat';
+csvname = 'allen_mouse_corr_records_20um_LR.csv';
+%csvname = 'marmoset_merged_SaleemRIKEN_records.csv';
+%csvname = 'allen_mouse_corr_records_50um_LR.csv';
+szthresh = 5;
+nthresh = 2;
+bgvals = 0;
+%ontname = 'merged_CCFSaleem_Ontology_hierarchy.csv';
+
+% ontology = readtable(ontname);
+extname = split(segname,'.');
+extname = extname{end};
+if strcmpi(extname,'vtk')
+    [x1,x2,x3,I] = read_vtk_image_v3(segname,'b'); %read in vtk file
+elseif strcmpi(extname,'nrrd')
+    I = nrrdread(segname);
+elseif strcmpi(extname,'nii') || strcmpi(extname,'gz')
+    I = niftiread(segname);
+elseif strcmpi(extname,'mat')
+    load(segname);
+    I = newI;
+    clear newI
+else
+    errmsg = "unrecognized volume file format";
+    error(errmsg);
+end
+
+%Get number of voxels and connected components for segs
+segids = unique(I); %unique label set
+segids(ismember(segids,bgvals)) = [];
+newI = I;
+replvec = [];
+replvox = [];
+replseg = [];
+newrvox = [];
+allsegvec = [];
+allcompvec = [];
+allnvoxvec = [];
+for i = 1:length(segids)
+    bwseg = zeros(size(I));
+    curseg = segids(i);
+    bwseg(I==curseg) = 1;
+    concomp = bwconncomp(bwseg,6); %6 defines connectivity as touching faces, excluding corner and edges links
+    ncomp = concomp.NumObjects;
+    for j = 1:length(concomp.PixelIdxList)
+        curcomp = concomp.PixelIdxList{j};
+        allsegvec = [allsegvec;curseg];
+        allcompvec = [allcompvec;j];
+        allnvoxvec = [allnvoxvec;length(curcomp)];
+        if length(curcomp) <= szthresh && ncomp > nthresh
+            replvec = [replvec;repmat(curseg,length(curcomp),1)];
+            replvox = [replvox;curcomp];
+            replseg = [replseg;repmat(j,length(curcomp),1)];
+            [curx,cury,curz] = ind2sub(size(I),curcomp);
+            neighbs = [curx-1 cury curz;curx+1 cury curz;curx cury-1 curz;...
+                curx cury+1 curz;curx cury curz-1;curx cury curz+1];
+            [xtest,ytest] = find(neighbs==0); %testing for whether any neighbs at edge of volume
+            if ~isempty(xtest)
+                neighbs(xtest,:) = [];
+            end
+            neighbs = sub2ind(size(I),neighbs(:,1),neighbs(:,2),neighbs(:,3));
+            neighbs(ismember(neighbs,curcomp)) = [];
+            curregids = I(neighbs);
+            repval = mode(curregids);
+            if repval == 0
+                curregids(curregids==0) = [];
+            end
+            newI(curcomp) = mode(curregids);
+            newrvox = [newrvox;repmat(mode(curregids),length(curcomp),1)];
+%             figure; scatter3(curx,cury,curz,40,'filled','bo'); hold on;
+%             scatter3([curx+1 curx-1 curx curx curx curx],...
+%                 [cury cury cury+1 cury-1 cury cury],...
+%                 [curz curz curz curz curz+1 curz-1],30,'filled','rs');
+%             xticks(min(curx(:))-1:max(curx(:))+1); 
+%             yticks(min(cury(:))-1:max(cury(:))+1); 
+%             zticks(min(curz(:))-1:max(curz(:))+1);
+        end
+    end
+end
+
+postsegvec = [];
+postcompvec = [];
+postnvoxvec = [];
+zsegs = [];
+for i = 1:length(segids)
+    bwseg = zeros(size(newI));
+    curseg = segids(i);
+    bwseg(newI==curseg) = 1;
+    concomp = bwconncomp(bwseg,6); %6 defines connectivity as touching faces, excluding corner and edges links
+    ncomp = concomp.NumObjects;
+    if ncomp > 0
+        postsegvec = [postsegvec;repmat(curseg,ncomp,1)];
+        postcompvec = [postcompvec;(1:ncomp)'];
+        tempcomp = {concomp.PixelIdxList{:}}';
+        postnvoxvec = [postnvoxvec;cellfun(@length,tempcomp)];
+    else
+        zsegs = [zsegs;curseg];
+    end
+end
+
+%Make table of values & save
+% replids = unique(replvec);
+% repcounts = sum(replvec(:)==replids(:)')';
+% replrec = table(replids,repcounts);
+replrec = table(replvec,replvox,replseg,newrvox);
+writetable(replrec,csvname);
+preconvtab = table(allsegvec,allcompvec,allnvoxvec);
+postconvtab = table(postsegvec,postcompvec,postnvoxvec);
+
+%Write out new volume as file given in outext
+outvolnm = [outname outext];
+if strcmpi(outext,'.mat')
+    save(outvolnm,"newI");
+elseif contains(outext,'nii')
+    niftiwrite(newI,outvolnm);
+elseif strcmpi(outext,'.vtk')
+    write_vtk_image(newI,outvolnm);
+end
+
+
+
